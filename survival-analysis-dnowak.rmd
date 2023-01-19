@@ -1,0 +1,1070 @@
+---
+title: "Survival Analysis"
+author: "Dominika Nowak"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+    theme: flatly
+  pdf_document:
+    toc: yes
+---
+
+
+# - Wstęp
+
+Do przeprowadzenia analizy historii zdarzeń wykorzystano zbiór danych *gbsg* z pakietu Survival. Zestaw danych zawiera dokumentację z badania przeprowadzonego w latach 1984-1989 przez niemiecką grupę badawczą nad rakiem piersi na 720 pacjentkach z rakiem piersi z przerzutami do węzłów chłonnych. W zbiorze danych zostały zachowane dane 686 pacjentek z pełnym zbiorem informacji. Rak piersi jest najczęściej występującym nowotworem złośliwym u kobiet. Powstaje z komórek gruczołu piersiowego, który rozwija się miejscowo w piersi oraz daje przerzuty do węzłów chłonnych i narządów wewnętrznych (np. płuc, wątroby, kości i mózgu). Celem badania jest określenie, które zmienne ze zbioru danych najbardziej wpływają na przeżywalność kobiet lub nawrót choroby kobiet z rakiem piersi.
+
+## - W zbiorze danych występują następujące zmienne: 
+
+* ***pid*** - identyfikator pacjentki
+* ***age*** - wiek badanej pacjentki wyznaczony w latach
+* ***meno*** - stan menopauzy (0 = przed menopauzą, 1 = po menopauzie)
+* ***size*** - wielkość guza [mm]; w pierwszym stadium raka piersi guz ma średnicę nie większą niż 50mm, w drugim stadium guz osiąga wielkość między 20mm, a 50mm, kolejne stadia to guz powyżej 50mm oraz inne czynniki
+* ***grade*** - stopień guza; I stopień – nowotwór we wczesnej fazie rozwoju, II stopień – nowotwór średnio-zaawansowany, III stopień – nowotwór zaawansowany
+* ***nodes*** - liczba węzłów chłonnych z przerzutami; jest to jeden z głównych czynników określających stopień zaawansowania raka 
+* ***pgr*** - receptory progesteronowe (fmol/l)
+* ***er*** - receptory estrogenowe (fmol/l)
+
+receptory estrogenowe (ER) i progesteronowe (PGR) to specyficzne białka obecne w komórkach określonych tkanek organizmu. Ich funkcją jest wiązanie estrogenów i progesteronu, żeńskich hormonów płciowych obecnych we krwi, które stymulują wzrost komórek i ich podziały; badanie na ich obecność wykonuje się w celu ustalenia rodzaju leczenia farmakologicznego i prognozowania w nowotworach sutka
+
+* ***hormon*** - terapia hormonalna, 0 = nie, 1 = tak; hormonoterapia jest jedną z metod leczenia raka piersi. Warunkiem włączenia takiego leczenia jest obecność receptorów hormonalnych na powierzchni komórek nowotworowych, co stwierdzane jest na podstawie badania wycinka guza. Jest to leczenie mniej toksyczne, a także zmniejsza prawdopodobieństwo nawrotów choroby
+* ***rfstime*** - czas przeżycia bez nawrotów; dni do pierwszego nawrotu, zgonu lub ostatniej obserwacji
+* ***status*** - 0 = żyje bez nawrotu, 1 = nawrót lub śmierć
+* ***cens*** - wskaźnik cenzurowania; 0 = ocenzurowane, 1 = zdarzenie
+
+## - Niezbędne biblioteki do realizacji projektu:
+
+* *survival*
+* *survminer*
+* *survMisc*
+* *gtools*
+* *MASS*
+* *mfp*
+* *splines*
+* *gridExtra*
+* *ggplot2*
+* *psych*
+* *CoxR2*
+* *dplyr*
+
+```{r, message=FALSE, warning=FALSE}
+#install.packages('survival')
+library(survival)
+#install.packages('survminer')
+library(survminer)
+#install.packages('survMisc')
+library(survMisc)
+#install.packages('gtools')
+library(gtools)
+#install.packages('MASS')
+library(MASS)
+#install.packages('mfp')
+library(mfp)
+#install.packages('splines')
+library(splines)
+#install.packages('gridExtra')
+library(gridExtra)
+#install.packages('ggplot2')
+library(ggplot2)
+#install.packages('psych')
+library(psych)
+#install.packages("CoxR2")
+library(CoxR2)
+#install.packages("dplyr")
+library(dplyr)
+```
+
+# - Wczytanie i prezentacja danych
+
+Poniżej przedstawiono 10 pierwszych i ostatnich rekordów ze zbioru danych. Występują w nim zarówno zmienne ilościowe jak i jakościowe, jednak te drugie zostały zapisane w formie liczbowej 1/0 (stan menopauzy, czy jest prowadzona terapia hormonalna oraz czy pacjentka żyje bez nawrotu). W badanym zbiorze nie występują braki danych.
+
+```{r, message=FALSE, warning=FALSE}
+data(gbsg)
+dane<-gbsg
+dane$cens <- (gbsg$status==1)*1
+NA_count <- colSums(is.na(dane))
+NA_count
+head(dane,10)
+tail(dane,10)
+```
+
+
+
+## - Identyfikacja i eliminacja wartości skrajnych
+
+W celu poprawy jakości danych (wartości odstające mogą zaburzać estymację/redykcję/klasyfikację modelu) przeprowadzono identyfikację oraz następnie wyelimionowanie ze zbioru danych wartości skrajnych. Pod uwagę zostały wzięte tylko zmienne ilościowe.
+
+```{r}
+quartiles <- quantile(dane$age, probs=c(.2, .8), na.rm = FALSE)
+IQR <- IQR(dane$age)
+ 
+Lower <- quartiles[1] - 1.5*IQR
+Upper <- quartiles[2] + 1.5*IQR 
+ 
+dane2 <- subset(dane, dane$age > Lower & dane$age < Upper)
+```
+
+```{r}
+quartiles <- quantile(dane2$size, probs=c(.2, .8), na.rm = FALSE)
+IQR <- IQR(dane2$size)
+ 
+Lower <- quartiles[1] - 1.5*IQR
+Upper <- quartiles[2] + 1.5*IQR
+dane <- subset(dane2, dane2$size > Lower & dane2$size < Upper)
+```
+
+```{r}
+quartiles <- quantile(dane$nodes, probs=c(.2, .8), na.rm = FALSE)
+IQR <- IQR(dane$nodes)
+ 
+Lower <- quartiles[1] - 1.5*IQR
+Upper <- quartiles[2] + 1.5*IQR
+dane3 <- subset(dane, dane$nodes > Lower & dane$nodes < Upper)
+```
+
+```{r}
+quartiles <- quantile(dane3$pgr, probs=c(.2, .8), na.rm = FALSE)
+IQR <- IQR(dane3$pgr)
+ 
+Lower <- quartiles[1] - 1.5*IQR
+Upper <- quartiles[2] + 1.5*IQR
+dane4 <- subset(dane3, dane3$pgr > Lower & dane3$pgr < Upper)
+```
+
+```{r}
+quartiles <- quantile(dane4$er, probs=c(.2, .8), na.rm = FALSE)
+IQR <- IQR(dane4$er)
+ 
+Lower <- quartiles[1] - 1.5*IQR
+Upper <- quartiles[2] + 1.5*IQR
+dane <- subset(dane4, dane4$er > Lower & dane4$er < Upper)
+```
+
+
+## - Statystyki opisowe zmiennych z oczyszczonego zbioru danych
+
+```{r}
+dane$meno <- as.factor(dane$meno)
+dane$grade <- as.factor(dane$grade)
+dane$hormon<- as.factor(dane$hormon)
+dane$status <- as.factor(dane$status)
+dane$cens <- as.factor(dane$cens)
+summary(dane)
+```
+
+## - Graficzna prezentacja zmiennych ilościowych
+
+Biorąc pod uwage zmienną określającą wiek pacjentek, najniższą wartością jest 25, a najwyższą 79. Średnia wieku wynosi 51 lat.
+Wielkość zaobserowanych guzów u pacjentek wynosi od 3mm do maksymalnie 57mm, czyli średnio 25mm (drugie stadium zaawansowania raka piersi). U pacjentek zaobserwowano od 1 do maksymalnie 14 guzów z przerzutam. 
+
+W przypadku receptorów progesteronowych i estrogenowych średnia w obu przypadkach wynosi 25 (im większy poziom receptorów tym większa szansa na skuteczność przeprowadzenia leczenia hormonalnego). Zmienne nodes, pgr oraz er charakteryzują się asymetrią prawostronną. 
+
+```{r}
+grid.arrange(ggplot(data = dane, aes(x = age)) + geom_histogram(binwidth = 3, fill="pink") + theme_pubclean() + 
+  labs(y = "Liczba pacjentek") + labs(x = "Wiek pacjentek") +  ggtitle('Zmienna age') +
+  theme(axis.title.y = element_text(size=11),
+        axis.text.y = element_text(size=11),
+        axis.title.x = element_text(size=11),
+        axis.text.x = element_text(size=11)),
+
+ggplot(data = dane, aes(x = size)) + geom_histogram(binwidth = 3, fill="darkmagenta") + theme_pubclean() + 
+  labs(y = "Liczba pacjentek") + labs(x = "Wielkość guza [mm]") + ggtitle('Zmienna size') +
+  theme(axis.title.y = element_text(size=11),
+        axis.text.y = element_text(size=11),
+        axis.title.x = element_text(size=11),
+        axis.text.x = element_text(size=11)),
+
+ggplot(data = dane, aes(x = nodes)) + geom_histogram(binwidth = 3, fill="burlywood4") + theme_pubclean() + 
+  labs(y = "Liczba pacjentek") + labs(x = "Liczba węzłów chłonnych z przerzutami") + ggtitle('Zmienna nodes') +
+  theme(axis.title.y = element_text(size=11),
+        axis.text.y = element_text(size=11),
+        axis.title.x = element_text(size=11),
+        axis.text.x = element_text(size=11)) )
+
+grid.arrange(ggplot(data = dane, aes(x = pgr)) + geom_histogram(binwidth = 3, fill="cornsilk3") + theme_pubclean() + 
+  labs(y = "Liczba pacjentek") + labs(x = "Receptory progesteronowe (fmol/l)") + ggtitle('Zmienna pgr') +
+  theme(axis.title.y = element_text(size=11),
+        axis.text.y = element_text(size=11),
+        axis.title.x = element_text(size=11),
+        axis.text.x = element_text(size=11)),
+
+ggplot(data = dane, aes(x = er)) + geom_histogram(binwidth = 3, fill="deeppink3") + theme_pubclean() + 
+  labs(y = "Liczba pacjentek") + labs(x = "Receptory estrogenowe (fmol/l)") + ggtitle('Zmienna er') +
+  theme(axis.title.y = element_text(size=11),
+        axis.text.y = element_text(size=11),
+        axis.title.x = element_text(size=11),
+        axis.text.x = element_text(size=11)))
+```
+
+## - Graficzna prezentacja danych zmiennych jakościowych
+
+**Przedstawienie zmiennych meno i grade**
+
+Liczba kobiet z menopauzą (*280*) jest nieznacznie większa od pacjentek przed menopauzą (*240*).
+Jeśli chodzi o stopień zaawansowania guza to znaczna większość pacjentek (*336*) jest w drugim stopniu zaawansowania (nowotwór średnio zaawansowany). W pierwszym stopniu zaawansowania znajduje się *59* kobiet, a w trzecim stopniu *125* pacjentek.
+
+```{r}
+dane %>%
+  count(meno) %>%
+  ggplot() + geom_col(aes(x = meno, y = n, fill = meno), alpha = 0.7)+ geom_label(aes(x = meno, y = n, label = n)) + scale_fill_manual(values = c("deepskyblue2","red3")) +
+  theme_pubclean() +
+  ggtitle('Stan menopauzy') + 
+  theme(axis.title.y = element_text(color="grey", size=11),
+        axis.title.x=element_blank(),
+        plot.title = element_text(color="black", size=15, family="serif"))
+
+dane %>%
+  count(grade) %>%
+  ggplot() + geom_col(aes(x = grade, y = n, fill = grade), alpha = 0.7)+ geom_label(aes(x = grade, y = n, label = n)) + scale_fill_manual(values = c("deepskyblue2","yellow","red")) +
+  theme_pubclean() +
+  ggtitle('Stopień zaawansowania guza') + 
+  theme(axis.title.y = element_text(color="grey", size=11),
+        plot.title = element_text(color="black", size=15, family="serif"))
+```
+
+Spośród badanych pacjentek ponad 65% z nich (*343*) stosuje terapię hormonalną. Jeżeli chodzi o życie bez nawrotu, to ponad połowie pacjentek (*297*) udaje się żyć w zdrowiu, natomiast u *223* nastąpił nawrót choroby bądź śmierć.
+*223* badanych jednostek to obserwacje ocenzurowane - nieocenzrowanych pozostaje *297* jednostek. Cenzurowanie ma miejsce, gdy wszystkie jednostki mogą dostać się do próby, a dla niektórych z nich czas obserwacji będzie krótszy niż czas trwania.
+
+```{r}
+dane %>%
+  count(hormon) %>%
+  ggplot() + geom_col(aes(x = hormon, y = n, fill = hormon), alpha = 0.7)+ geom_label(aes(x = hormon, y = n, label = n)) + scale_fill_manual(values = c("deepskyblue2","tomato")) +
+  theme_pubclean() +
+  ggtitle('Terapia hormonalna') + 
+  theme(axis.title.y = element_text(color="grey", size=11),
+        axis.title.x=element_blank(),
+        plot.title = element_text(color="black", size=15, family="serif"))
+        
+dane %>%
+  count(cens) %>%
+  ggplot() + geom_col(aes(x = cens, y = n, fill = cens), alpha = 0.7)+ geom_label(aes(x = cens, y = n, label = n)) + scale_fill_manual(values = c("red","darkorchid4")) +
+  theme_pubclean() +
+  ggtitle('Wskaźnik ocenzurowania') + 
+  theme(axis.title.y = element_text(color="grey", size=11),
+        axis.title.x=element_blank(),
+        plot.title = element_text(color="black", size=15, family="serif"))
+```
+
+
+## - Rozkład zmiennej rfstime z podziałem według zmiennej cens
+
+Rozkłady dla jednostek cenzurowanych w porównaniu do tych u których wsytąpiło zdarzenie różnią się. U jednostek cenzurowanych można zauważyć skośność lewostronną, natomiast rozkład dla jednostek u których cens=1 występuje skośność prawostronna.
+
+```{r}
+dane %>%
+  ggplot( aes(x=rfstime, fill=cens)) +  facet_grid(~cens) +
+    geom_histogram( color="#e9ecef", alpha=0.6, position = 'identity') +
+    scale_fill_manual(values=c("darkorchid4", "antiquewhite4")) + 
+    theme_pubclean() + labs(y = "Liczba pacjentek") + labs(x = "Czas [dni]") +
+    labs(fill="") + ggtitle('Rozkład zmiennej rfstime z podziałem według zmiennej cens')
+```
+
+## - Wykresy pudełkowe dla wybranych par zmiennych 
+
+* Dla wszystkich stopniów zaawansowania guza średni wiek pacjentek jest podobny.
+
+```{r}
+ggplot(dane, aes(x=grade, y = age, fill=grade)) + geom_boxplot(size=1.2, alpha=0.5) +
+  scale_fill_manual(values = c("deeppink", "blueviolet","cornsilk4")) + theme_pubclean() +
+  ggtitle("Age według grade") +
+  theme(axis.title.y = element_text(color="black", size=15),
+        axis.title.x=element_blank(),
+        plot.title = element_text(color="black", size=20, family="serif")) +
+  labs(y = "age")
+```
+
+* Terapię hormonalną stosują przeważnie starsze pacjentki.
+
+```{r}
+ggplot(dane, aes(x=hormon, y = age, fill=hormon)) + geom_boxplot(size=1.2, alpha=0.5) +
+  scale_fill_manual(values = c("darkgreen","chartreuse")) + theme_pubclean() +
+  ggtitle("Age według hormon") +
+    theme(axis.title.y = element_text(color="black", size=15),
+        axis.title.x=element_blank(),
+        plot.title = element_text(color="black", size=20, family="serif")) +
+  labs(y = "age")
+```
+
+* Wraz z wyższym stopniem zaawansowania nowotworu wzrasta wielkość guza wyrażona w milimetrach.
+
+```{r}
+ggplot(dane, aes(x=grade, y = size, fill=grade)) + geom_boxplot(size=1.2, alpha=0.5) +
+  scale_fill_manual(values = c("azure3", "coral","darkred")) + theme_pubclean() +
+  ggtitle("Size według grade") +
+    theme(axis.title.y = element_text(color="black", size=15),
+        axis.title.x=element_blank(),
+        plot.title = element_text(color="black", size=20, family="serif")) +
+  labs(y = "size")
+```
+
+* Wraz ze wzrostem zaawansowania nowotworu wzrasta liczba węzłów chłonnych z przerzutami. Wszystkie z ze stopniów zaawansowania guza mają stosunkowo niskie wartości - dla stopnia I - średnia jest na poziomie 3, natomiast dla stopnia II i III wynosi 4.
+
+```{r}
+ggplot(dane, aes(x=grade, y = nodes, fill=grade)) + geom_boxplot(size=1.2, alpha=0.5) +
+  scale_fill_manual(values = c("cyan", "deepskyblue3","darkslategray")) + theme_pubclean() +
+  ggtitle("nodes według grade") +
+    theme(axis.title.y = element_text(color="black", size=15),
+        axis.title.x=element_blank(),
+        plot.title = element_text(color="black", size=20, family="serif")) +
+  labs(y = "nodes")
+```
+
+*  Wraz ze wzrostem zaawansowania nowotworu maleje liczba receptorów progesteronowych. Dla I stopnia guza średnia utrzymuje się na poziomie 120 fmol/l, natomiast dla stopnia zaawansowania II - 67 fmol/l, a dla III stopnia - zaledwie 24 fmol/l.
+
+```{r}
+ggplot(dane, aes(x=grade, y = pgr, fill=grade)) + geom_boxplot(size=1.2, alpha=0.5) +
+  scale_fill_manual(values = c("beige","bisque3","burlywood4")) + theme_pubclean() +
+  ggtitle("pgr według grade") +
+   theme(axis.title.y = element_text(color="black", size=15),
+        axis.title.x=element_blank(),
+        plot.title = element_text(color="black", size=20, family="serif")) +
+  labs(y = "pgr")
+```
+
+* Wraz ze wzrostem zaawansowania nowotworu maleje liczba receptorów estrogenowych. Dla I stopnia guza średnia utrzymuje się na poziomie 80 fmol/l, natomiast dla stopnia zaawansowania II - 53 fmol/l, a dla III stopnia - zaledwie 26 fmol/l.
+
+```{r}
+ggplot(dane, aes(x=grade, y = er, fill=grade)) + geom_boxplot(size=1.2, alpha=0.5) +
+  scale_fill_manual(values = c("darkgoldenrod1","darkorange","darkorange4")) + theme_pubclean() +
+  ggtitle("er według grade") +
+   theme(axis.title.y = element_text(color="black", size=15),
+        axis.title.x=element_blank(),
+        plot.title = element_text(color="black", size=20, family="serif")) +
+  labs(y = "er")
+```
+
+* Średni czas do wystąpienia zdarzenia w zależności od stopnia zaawansowania guza prezentuje się następująco: stopień I - 1371 dni, stopień II - 1164 dni oraz stopień III - 983 dni.
+
+```{r}
+ggplot(dane, aes(x=grade, y = rfstime, fill=grade)) + geom_boxplot(size=1.2, alpha=0.5) +
+  scale_fill_manual(values = c("aliceblue","aquamarine","aquamarine4")) + theme_pubclean() +
+  ggtitle("rfstime według grade") +
+   theme(axis.title.y = element_text(color="black", size=15),
+        axis.title.x=element_blank(),
+        plot.title = element_text(color="black", size=20, family="serif")) +
+  labs(y = "rfstime")
+```
+
+## - Korelogram zmiennych ilościowych
+
+Analizując poniższy korelogram można zauważyć, że korelacje pomiędzy zmiennymi przyjmują małe wartości. Najsilniejsza korelacja dodatnia występuje pomiędzy parą zmiennych pgr i er (*0,36*), natomiast najsilniejsza korelacja ujemna występuje pomiędzy zmiennymi pgr i nodes (*-0,16*). Najniższe korrelacje z oizistałymi zmiennymi tworzy zmienna size.
+
+```{r}
+kr <- dane[,c(2,4,6,7,8)]
+k=cor(kr)
+corPlot(k, cex = 0.6, cex.axis=0.6,cex.lab=2)
+```
+
+
+# - Funkcja przeżycia i skumulowanego hazardu
+
+## - Porównanie estymatorów Kaplana - Meiera i Nelsona - Aelena
+
+Na poniższym wykresie zobrazowano funkcje przeżycia dla wszystkich jednostek ze zredukowanego zbioru danych przy użyciu estymatora Kaplana - Meiera oraz  Nelsona - Aelena, dla 2 rodzajów przedziału ufności - liniowego i logarytmicznego.
+
+* linia zielona - estymator Kaplana - Meiera z liniowym przedziałem ufności
+
+* linia czerwona - estymator Kaplana - Meiera z logarytmicznym przedziałem ufności
+
+* linia niebieska - estymator Nelsona - Aelena z liniowym przedziałem ufności
+
+* linia pomarańczowa- estymator Nelsona - Aelena z logarytmicznym przedziałem ufności
+
+```{r, message=FALSE, warning=FALSE}
+dane$cens=(dane$status==1)*1
+Surv(dane$rfstime,dane$cens)
+dane$cens <- as.numeric(dane$cens)
+```
+
+Na wykresie można zauważyć brak istotnych różnic pomiędzy estymatorami oraz ich przedziałami ufności.
+
+```{r}
+km1 <- survfit(Surv(rfstime, cens) ~ 1, conf.type="plain", data=dane) # estymator KM
+plot(km1,col="green")
+km2<-survfit(Surv(rfstime,cens)~1,conf.type="log", data=dane) # estymator KM
+lines(km2, col="red")
+
+nels1<-survfit(Surv(rfstime,cens) ~ 1, conf.type ="plain", type="fleming-harrington",data=dane) # estymator NA
+lines(nels1,col="blue") 
+nels2<-survfit(Surv(rfstime,cens) ~ 1, conf.type ="log", type="fleming-harrington",data=dane) # estymator NA
+lines(nels2,col="orange")
+```
+
+### - Statystyki funkcji przeżycia z użyciem estymatora Kaplana - Meiera i Nelsona - Aalena
+
+Na powyższych wykresach można zauważyć małą różnicę na końcu wykresu - funkcja przeżycia przy użyciu estymatora Kaplana-Meiera jest mniejsza niż 0,25, natomiast w przypadku wykorzystania estymatora Nelsona - Aelena nie przekracza tej wartości. W przypadku pierwszego estymatora po upływie 2500 dni pozostaje w zbiorze około 24% jednostek, natomiast przy drugim estymatorze 25% jednostek. Można te różnice zauważyć w statystykach estymatorów, w kolumnie dotyczącej 95% dolnego przedziału ufności dla mediany.
+
+```{r}
+summary(km1)$table
+cat("\n")
+summary(km2)$table
+cat("\n")
+summary(nels1)$table
+cat("\n")
+summary(nels2)$table
+```
+
+
+## - Rozkłady czasu trwania dla zmiennych
+
+```{r, message=FALSE, warning=FALSE}
+dane$age_cat=quantcut(dane$age,q=4)
+dane$size_cat=quantcut(dane$size,q=4)
+dane$nodes_cat=quantcut(dane$nodes,q=4)
+dane$pgr_cat=quantcut(dane$pgr,q=4)
+dane$er_cat=quantcut(dane$er,q=4)
+```
+
+
+### - Wykresy funkcji czasu trwania dla zmiennych meno, grade i hormon oraz testy krzywych przeżycia
+
+**Biorąc pod uwagę zmienną *meno* prawdopodobieństwo przeżycia jest bardzo zbliżone w obu grupach (przed i po menopauzie), jednak po 2000 dniu prawdopodobieństwo wzrasta dla kobiet przed menopauzą. Mediana czasu przeżycia dla kobiet przed menopazuą wynosi 2034 dni, natomiast dla kobiet po menopauzie 1763 dni. Test Peto Peto (p-value = 1) i Log-Rank (p-value = 0.68) także wykazał, że zmienna meno nie jest istotnym predyktorem (na poziomie istotności alfa=0,05).**
+
+```{r}
+menort <- survfit(Surv(rfstime, cens) ~ meno, data = dane)
+summary(menort)$table
+
+Meno_t=survfit(Surv(rfstime,cens) ~ meno, data=dane, conf.type ="none", type="fleming-harrington") # estymator NA
+test1=survdiff(Surv(rfstime,cens)~meno, data=dane, rho=1) # test Peto i Peto
+test1
+plot(Meno_t,col=c("pink","darkgreen"))
+legend("topright",c("brak menopauzy","po menopauzie"),lty=1,col=c("pink","darkgreen"),bty="n")
+
+ggsurvplot(survfit(Surv(rfstime, cens) ~ meno, data = dane),
+           pval = TRUE, conf.int = TRUE,
+           risk.table = TRUE,
+           risk.table.col = "strata", 
+           linetype = "strata",
+           surv.median.line = "hv", 
+           ggtheme = theme_pubclean(),
+           palette = c("peachpuff3","orchid4"))
+```
+
+**Dla grup pacjentek podzielonych względem zmiennej *grade*, test Log-Rank wskazał na istotne różnice między grupami (p-value = 0.00068). Prawdopodobieństwo przeżycia jest największe dla kobiet z nowotowetem w pierwszym stopniu rozwoju (wczesna faza), natomiast dla kobiet z nowotworem drugiego i trzeciego stopnia na zbliżonym poziomie. Test Peto Peto także wykazał, że zmienna grade jest istotnym predyktorem (na poziomie istotności alfa=0,05).**
+
+```{r}
+gradert <- survfit(Surv(rfstime, cens) ~ grade, data = dane)
+summary(gradert)$table
+
+grade_t=survfit(Surv(rfstime,cens) ~ grade, data=dane, conf.type ="none", type="fleming-harrington") # estymator NA
+test2=survdiff(Surv(rfstime,cens)~grade, data=dane, rho=1) # test Peto i Peto
+test2
+plot(grade_t,col=c("red","blue","orange"))
+legend("topright",c("I stopień nowotworu","II stopień nowotworu","III stopień nowotworu"),lty=1,col=c("red","blue","orange"),bty="n")
+
+ggsurvplot(survfit(Surv(rfstime, cens) ~ grade, data = dane),
+           pval = TRUE, conf.int = TRUE,
+           risk.table = TRUE,
+           risk.table.col = "strata", 
+           linetype = "strata",
+           surv.median.line = "hv", 
+           ggtheme = theme_pubclean(),
+           palette = c("cadetblue","burlywood4", "chartreuse4"))
+```
+
+**Biorąc pod uwagę zmienną *hormon* prawdopodobieństwo przeżycia jest znacząco większe dla pacjentek stosujących terapię hormonalną. Mediana czasu przeżycia dla kobiet stosujących terapię hormonalną wynosi 2030 dni, natomiast dla kobiet nie stosujących takiej terapii 1601 dni. Test Log-Rank wskazał na istotne różnice między grupami (p-value = 0.0098). Test Peto Peto także wykazał, że zmienna hormon jest istotnym predyktorem (na poziomie istotności alfa=0,05).**
+
+```{r}
+hormonrt <- survfit(Surv(rfstime, cens) ~ hormon, data = dane)
+summary(hormonrt)$table
+
+hormon_t=survfit(Surv(rfstime,cens) ~ hormon, data=dane, conf.type ="none", type="fleming-harrington") # estymator NA
+test3=survdiff(Surv(rfstime,cens)~hormon, data=dane, rho=1) # test Peto i Peto
+test3
+plot(hormon_t,col=c("red","blue"))
+legend("topright",c("brak terapii hormonalnej","występuje terapia hormonalna"),lty=1,col=c("red","blue"),bty="n")
+
+ggsurvplot(survfit(Surv(rfstime, cens) ~ hormon, data = dane),
+           pval = TRUE, conf.int = TRUE,
+           risk.table = TRUE,
+           risk.table.col = "strata", 
+           linetype = "strata",
+           surv.median.line = "hv", 
+           ggtheme = theme_pubclean(),
+           palette = c("palegreen4", "indianred3"))
+```
+
+
+### - Wykresy funkcji trwania dla zmiennych skategoryzowanych age, size, nodes, pgr i er według kwantyli oraz testy krzywych przeżycia
+
+**Dla zmiennej *age* największe prawodpodobieństwo przeżycia jest dla drugiej najmłodszej grupy wiekowej - pacjentek od 45 lat, do 51 lat. Test Log-Rank wykazał istotne różnice rozkładów czasu trwania pomiędzy badanymi grupami (p-value = 0.00069). Test Peto Peto także wykazał, że zmienna skategoryzowana age jest istotnym predyktorem (na poziomie istotności alfa=0,05).**
+
+```{r}
+agert <- survfit(Surv(rfstime, cens) ~ age_cat, data = dane)
+summary(agert)$table
+
+age_t=survfit(Surv(rfstime,cens) ~ age_cat, data=dane, conf.type ="none", type="fleming-harrington") # estymator NA
+test4=survdiff(Surv(rfstime,cens)~age_cat, data=dane, rho=1) # test Peto i Peto
+test4
+plot(age_t,col=c("red","blue","orange","pink"))
+legend("topright",c("[25,45]","(45,51]", "(51,60]", "(60,79]"),lty=1,col=c("red","blue","orange","pink"),bty="n")
+
+ggsurvplot(survfit(Surv(rfstime, cens) ~ age_cat, data = dane),
+           title    = "Survival curves",
+          subtitle = "Based on Kaplan-Meier estimates",
+          pval = TRUE, conf.int = TRUE,
+          risk.table = "abs_pct", 
+          risk.table.col = "strata", 
+          linetype = "strata", 
+          surv.median.line = "hv", 
+          ggtheme = theme_pubclean(), 
+          palette = c("brown4","aquamarine", "cadetblue2", "bisque1"),
+          risk.table.height = 0.3)
+```
+
+**Z kolei dla zmiennej *size* największe prawdopodobieństwo przeżycia występuje dla pajcentek z guzem od 3 do 20mm, a kolejno dla tych z guzem 20 do 25mm.Średnia czasu trwania dla pacjentek zmniejsza się, im stadium guza jest bardziej zaawansowane. Testy Log-Rank i Peto Peto wykazały, że zmienna skategoryzowana size nie jest istotnym predyktorem (na poziomie istotności alfa=0,05).**
+
+```{r}
+sizert <- survfit(Surv(rfstime, cens) ~ size_cat, data = dane)
+summary(sizert)$table
+
+size_t=survfit(Surv(rfstime,cens) ~ size_cat, data=dane, conf.type ="none", type="fleming-harrington") # estymator NA
+test5=survdiff(Surv(rfstime,cens)~ size_cat, data=dane, rho=1) # test Peto i Peto
+test5
+plot(age_t,col=c("red","blue","orange","pink"))
+legend("topright",c("[3,20]","(20,25]", "(25,35]", "(35,58]"),lty=1,col=c("red","blue","orange","pink"),bty="n")
+
+ggsurvplot(survfit(Surv(rfstime, cens) ~ size_cat, data = dane),
+           title    = "Survival curves",
+           subtitle = "Based on Kaplan-Meier estimates",
+           pval = TRUE, conf.int = TRUE,
+           risk.table = "abs_pct",
+           risk.table.col = "strata", 
+           linetype = "strata",
+           ggtheme = theme_pubclean(),
+           palette = c("deeppink4","darkolivegreen1", "cyan3", "bisque4"),
+          risk.table.height = 0.3)
+```
+
+**W przypadku zmiennej *nodes*, czyli liczby węzłów chłonnych z przerzutami - im więcej czasu minie, tym prawdopodobieństwo przeżycia pacjentek maleje. Test Log-Rank wykazał istotne różnice rozkładów czasu trwania pomiędzy badanymi grupami (p-value < 0.0001). Test Peto Peto także wykazał, że zmienna skategoryzowana nodes jest istotnym predyktorem (na poziomie istotności alfa=0,05).**
+
+```{r}
+nodesrt <- survfit(Surv(rfstime, cens) ~ nodes_cat, data = dane)
+summary(nodesrt)$table
+
+nodes_t=survfit(Surv(rfstime,cens) ~ nodes_cat, data=dane, conf.type ="none", type="fleming-harrington") # estymator NA
+test6=survdiff(Surv(rfstime,cens)~ nodes_cat, data=dane, rho=1) # test Peto i Peto
+test6
+plot(nodes_t,col=c("red","blue","orange","pink"))
+legend("topright",c("1","(1,3]", "(3,6]", "(6,14]"),lty=1,col=c("red","blue","orange","pink"),bty="n")
+
+ggsurvplot(survfit(Surv(rfstime, cens) ~ nodes_cat, data = dane),
+           title    = "Survival curves",
+           subtitle = "Based on Kaplan-Meier estimates",
+           pval = TRUE, conf.int = TRUE,
+           risk.table = "abs_pct",
+           risk.table.col = "strata", 
+           linetype = "strata",
+           ggtheme = theme_pubclean(),
+           palette = c("deeppink4","darkolivegreen1", "cyan3", "bisque4"),
+          risk.table.height = 0.3)
+```
+
+
+**W przypadku zmiennej *pgr* i *er* możemy zauważyć, że im większa obecność receptorów u pacjentek, tym wyższe prawodpobieństwo przeżycia. Test Log-Rank wykazał istotne różnice rozkładów czasu trwania pomiędzy badanymi grupami (p-value < 0.0001). Test Peto Peto także wykazał, że zmienna skategoryzowana pgr jest istotnym predyktorem (na poziomie istotności alfa=0,05).**
+
+```{r}
+pgrrt <- survfit(Surv(rfstime, cens) ~ pgr_cat, data = dane)
+summary(pgrrt)$table
+
+pgr_t=survfit(Surv(rfstime,cens) ~ pgr_cat, data=dane, conf.type ="none", type="fleming-harrington") # estymator NA
+test7=survdiff(Surv(rfstime,cens)~ pgr_cat, data=dane, rho=1) # test Peto i Peto
+test7
+plot(pgr_t,col=c("red","blue","orange","pink"))
+legend("topright",c("[0,5]","(5,25]", "(25,92]", "(92,356]"),lty=1,col=c("red","blue","orange","pink"),bty="n")
+
+ggsurvplot(survfit(Surv(rfstime, cens) ~ pgr_cat, data = dane),
+           title    = "Survival curves",
+           subtitle = "Based on Kaplan-Meier estimates",
+           pval = TRUE, conf.int = TRUE,
+           risk.table = "abs_pct",
+           risk.table.col = "strata", 
+           linetype = "strata",
+           ggtheme = theme_pubclean(),
+           palette = c("deeppink4","darkolivegreen1", "cyan3", "bisque4"),
+          risk.table.height = 0.3)
+```
+
+**Test Log-Rank wykazał istotne różnice rozkładów czasu trwania pomiędzy badanymi grupami (p-value =0.00078). Test Peto Peto także wykazał, że zmienna skategoryzowana er jest istotnym predyktorem (na poziomie istotności alfa=0,05).**
+
+```{r}
+errt <- survfit(Surv(rfstime, cens) ~ er_cat, data = dane)
+summary(errt)$table
+
+er_t=survfit(Surv(rfstime,cens) ~ er_cat, data=dane, conf.type ="none", type="fleming-harrington") # estymator NA
+test8=survdiff(Surv(rfstime,cens)~ er_cat, data=dane, rho=1) # test Peto i Peto
+test8
+plot(er_t,col=c("red","blue","orange","pink"))
+legend("topright",c("[0,5]","(5,25]", "(25,77]", "(77,257]"),lty=1,col=c("red","blue","orange","pink"),bty="n")
+
+ggsurvplot(survfit(Surv(rfstime, cens) ~ er_cat, data = dane),
+           title    = "Survival curves",
+           subtitle = "Based on Kaplan-Meier estimates",
+           pval = TRUE, conf.int = TRUE,
+           risk.table = "abs_pct",
+           risk.table.col = "strata", 
+           linetype = "strata",
+           ggtheme = theme_pubclean(),
+           palette = c("deeppink4","darkolivegreen1", "cyan3", "bisque4"),
+          risk.table.height = 0.3)
+```
+
+
+## - Graficzna prezentacjia funkcji skumulowanego hazardu dla wybranych zmiennych 
+
+* meno - Hazard jest zblżony dla obu grup pacjentek - przed menopazuą jak i po menopauzie - do około 1750 dnia. Od tego momentu znacznie wzrasta hazard dla pacjentek po menopauzie.
+
+* grade - najwyższa wartość hazardu przypada dla pacjentek z guzem stopnia III, do około 2200 dnia - w tym momencie urywa się. Od tego momentu znacznie wzrasta hazard dla pacjentek z guzem stopnia II. Hazard dla pacjentek z guzem stopnia I zdecydowanie odstaje od pozostałych dwóch i jest najmniejszy.
+
+* hormon - Hazard wzrasta szybciej dla pacjentek, które nie przechodzą terapii hormonalnej.Zmiana ta jest stała w czasie, jednak na końcu przedziału czasowego zdecydowanie wzrasta.
+
+```{r}
+ch1<-ggsurvplot(survfit(Surv(rfstime, cens) ~ meno, data = dane),
+           conf.int = TRUE, ggtheme = theme_pubclean(), palette = c("aquamarine4", "darkmagenta"),
+           title="Funkcja skumulowanego hazardu dla zmiennej meno",
+           fun = "cumhaz")
+ch2<-ggsurvplot(survfit(Surv(rfstime, cens) ~ grade, data = dane),
+           conf.int = TRUE, ggtheme = theme_pubclean(), palette = c("cadetblue","burlywood4", "chartreuse4"),
+           title="Funkcja skumulowanego hazardu dla zmiennej grade",
+           fun = "cumhaz")
+ch3<-ggsurvplot(survfit(Surv(rfstime, cens) ~ hormon, data = dane),
+           conf.int = TRUE, ggtheme = theme_pubclean(), palette = c("cornsilk4", "cornflowerblue"),
+           title="Funkcja skumulowanego hazardu dla zmiennej hormon",
+           fun = "cumhaz")
+
+ggpar(ch1, font.main = c(10, "bold"), font.x = c(10),font.y = c(10),font.caption = c(10),  font.legend = c(10), 
+      font.tickslab = c(10))
+ggpar(ch2, font.main = c(10, "bold"), font.x = c(10),font.y = c(10),font.caption = c(10),  font.legend = c(10), 
+      font.tickslab = c(10))
+ggpar(ch3, font.main = c(10, "bold"), font.x = c(10),font.y = c(10),font.caption = c(10),  font.legend = c(10), 
+      font.tickslab = c(10))
+```
+
+
+# - Semiparametryczny model proporcjonalnego hazardu Coxa
+Model Coxa generuje funkcję przeżycia przewidującą prawdopodobieństwo, że zdarzenie będące przedmiotem zainteresowania wystąpiło w określonym czasie (t) dla danych wartości zmiennych predyktora. Kształt funkcji przeżycia i współczynniki regresji dla predyktorów są szacowane na podstawie obserwowanych obiektów. Informacje z ocenzurowanych obiektów - które nie są przedmiotem zainteresowania podczas obserwacji, są równie przydatne podczas szacowania modelu.
+
+## - Estymacja modelu PH Coxa1 z wszystkimi zmiennymi objaśniającymi
+
+Analizując poniższe wyniki testu Walda przynajmniej jedna zmienna objaśniająca w modelu statystycznie różni sie od 0. Zmienne grade, nodes, pgr oraz hormon są statystycznie różne od 0, ponieważ dla nich p-value < 0,05.
+
+```{r}
+Cox1 <- coxph(Surv(rfstime,cens)~age+meno+size+grade+nodes+pgr+er+hormon, data = dane)
+summary(Cox1)  
+```
+
+## - Zastosowanie funkcji krokowej (poszukuje ona najbardziej zoptymalizowanego ze wzgledu na kryterium AIC modelu) na podstawie modelu Cox1
+
+Funkcja krokowa, na podstawie kryterium informacyjnego AIC, wskazała takie same zmienne do budowy modelu PH Coxa, jakie zostały uznane za statystycznie istotne od 0 na poziomie istotności 0.05 przy zastosowaniu testu Walda.
+
+```{r}
+stepAIC(Cox1,direction="backward")
+```
+
+## - Weryfikacja założenia proporcjonalności modelu PH Cox1
+
+W celu poprawnego odzwzorowania wpływu zmiennych niezależnych na rozkład funkcji przeżycia jest spełnienie założenia proporcjonalności hazardów. Założenie jest spełnione dla zmiennej jeżeli p-value > 0,05. Dla zmiennych size, nodes, pgr oraz hormon założenie zostało spełnione, więc postanowiono użyć ich do budowy kolejnego modelu. Pomimo, że zmienna size nie jest statystycznie istotna od 0 oraz nie została wybrana podczas metody krokowej, postanowiono użyć jej do budowy kolejnego modelu - stworzonego na podstawie założenia proporcjonalności.
+
+```{r}
+Prop <- cox.zph(Cox1, transform = 'km')
+print(Prop)
+par(mfrow=c(1,2))
+plot(Prop)  
+```
+
+## - Estymacja nowego modelu Cox2
+
+Estymacja modelu PH Coxa po odrzuceniu zmiennych nieistotnych statystycznie oraz zaproponowanych przez metodę krokową.
+
+**Interpretacja parametrów:**
+
+*Hazard określany jest jako ryzyko zgonu pod warunkiem, że jednostka dożyje do danego momentu.*
+
+* Pacjentki, których guz ma stopień II (nowotwór średnio-zaawansowany) mają hazard o 111,06% wyższy niż pacjentki z guzem o stopniu I (nowotwór we wczesnej fazie rozwoju) cp.
+
+* Pacjentki, których guz ma stopień III (nowotwór zaawansowany) mają hazard o 113,03% wyższy niż pacjentki z guzem o stopniu I (nowotwór we wczesnej fazie rozwoju) cp.
+
+* Jeżeli liczba węzłów chłonnych z przerzutami wzrośnie o 1, to hazard wzrośnie o 12,37% cp.
+
+* Jeżeli poziom receptorów progesteronowych wzrośnie o 1 (fmol/l), to hazard zmaleje o 0,30% cp.
+
+* Pacjentki, które przechodzą terapię hormonalną mają hazard o 31,97% niższy niż pacjentki, które nie przechodzą terapii hormonalnej cp.
+
+
+```{r}
+Cox2 <- coxph(Surv(rfstime,cens)~grade+nodes+pgr+hormon, data = dane)
+summary(Cox2)  
+```
+
+## - Weryfikacja założenia proporcjonalności modelu Cox2
+
+Zmienna grade nie spełnia założenia proporcjonalności, natomiast pozostałe zmienne spełniają założenie proporcjonalności.
+
+```{r}
+Prop <- cox.zph(Cox2, transform = 'km')
+print(Prop)
+par(mfrow=c(1,2))
+plot(Prop)  
+```
+
+
+## - Estymacja modelu PH Coxa3 z wykorzystaniem zmiennych spełniających założenie o proporcjonalności 
+
+**Interpretacja parametrów:**
+
+*Hazard określany jest jako ryzyko zgonu pod warunkiem, że jednostka dożyje do danego momentu.*
+
+* Pacjentki, których rozmiar guza wzrośnie o 1 mm, to hazard wzrośnie o 0,79% cp.
+
+* Jeżeli liczba węzłów chłonnych z przerzutami wzrośnie o 1, to hazard wzrośnie o 12,22% cp.
+
+* Jeżeli poziom receptorów progesteronowych wzrośnie o 1 (fmol/l), to hazard zmaleje o 0,36% cp.
+
+* Pacjentki, które przechodzą terapię hormonalną, mają hazard o 31,41% niższy niż pacjentki, które nie przechodzą terapii hormonalnej cp.
+
+```{r}
+Cox3 <- coxph(Surv(rfstime,cens)~size+nodes+pgr+hormon, data = dane)
+summary(Cox3) 
+```
+
+## - Weryfikacja założenia proporcjonalności modelu Cox3
+
+Wszystkie zmienne spełniają założenie proporcjonalności.
+
+```{r}
+Prop <- cox.zph(Cox3, transform = 'km')
+print(Prop)
+par(mfrow=c(1,2))
+plot(Prop)  
+```
+
+## - Estymacja modelu PH Coxa4 z wykorzystaniem zmiennych spełniających założenie o proporcjonalności oraz po odrzuceniu zmiennych nieistotnych statystycznie i zaproponowanych przez metodę krokową.
+
+**Interpretacja parametrów:**
+
+*Hazard określany jest jako ryzyko zgonu pod warunkiem, że jednostka dożyje do danego momentu.*
+
+* Jeżeli liczba węzłów chłonnych z przerzutami wzrośnie o 1, to hazard wzrośnie o 12,59% cp.
+
+* Jeżeli poziom receptorów progesteronowych wzrośnie o 1 (fmol/l), to hazard zmaleje o 0,36% cp.
+
+* Pacjentki, które przechodzą terapię hormonalną, mają hazard o 32,05% niższy niż pacjentki, które nie przechodzą terapii hormonalnej cp.
+
+```{r}
+Cox4 <- coxph(Surv(rfstime,cens)~nodes+pgr+hormon, data = dane)
+summary(Cox4) 
+```
+
+
+## -  Weryfikacja założenia proporcjonalności modelu Cox4
+
+Wszystkie zmienne spełniają założenie proporcjonalności.
+
+```{r}
+Prop <- cox.zph(Cox4, transform = 'km')
+print(Prop)
+par(mfrow=c(1,2))
+plot(Prop)  
+```
+
+
+## - Identyfikacja jednostek odstających Cox2
+
+Jednostki odstające/wpływowe mają nietypową konfigurację zmiennych objaśniających, a także mogą wywierać niepożądany wpływ na oszacowania parametrów i dopasowanie modelu.
+
+```{r}
+reszty <- resid(Cox2, type="scaledsch") 
+Time <- as.numeric(rownames(reszty))
+zmienne <- names(dane[,c(5,6,7,9)])
+
+par(mfrow = c(3,1))
+for (i in 1:4) {
+  plot(log(Time), reszty[,i], xlab="ln(Czas)", main=zmienne[i],
+       ylab="Skalowane reszty Schoenfelda", pch=20, cex=0.7)
+  lines(smooth.spline(log(Time), reszty[,i] ), lwd=3 )
+}
+
+deviance=residuals(Cox2,type="deviance")
+s=Cox2$linear.predictors
+plot(s,deviance,xlab="Liniowy predyktor",ylab="Reszty odchyleń",cex=0.5, pch=20)
+
+abline(h=3,lty=3)
+dane$deviance <- deviance
+c1 <- which(dane$deviance > 3)
+```
+
+## - Usuwanie ze zbioru jednostek odstających dla modelu Cox2
+Jednostki o nietypowych/odstających parametrach, w miarę możliwości, powinny zostać usunięte ze zbioru.
+
+```{r}
+dfb=residuals(Cox2,type="dfbeta")
+n=dim(dfb)[1]
+obs.nr=c(1:n)
+par(mfrow = c(2,3))
+for (j in 1:4) {
+  plot(obs.nr,dfb[,j],xlab="Numer jednostki",ylab="Przyrost oceny parametru",
+      main=zmienne[j])
+  }
+a1 = which(abs(dfb[,1])>(0.004)) #usunac te jednostki
+a2 = which(abs(dfb[,2])>(0.01))
+a3 = which(abs(dfb[,3])>(0.05))
+a4 = which(abs(dfb[,4])>(0.004))
+
+c <- sort(unique(c(a1,a2,a3,a4,c1)))
+danec1 <- dane[-c,]
+```
+
+
+## - Identyfikacja jednostek odstających Cox3
+```{r}
+reszty <- resid(Cox3, type="scaledsch") 
+Time <- as.numeric(rownames(reszty))
+zmienne <- names(dane[,c(4,6,7,9)])
+
+par(mfrow = c(3,1))
+for (i in 1:4) {
+  plot(log(Time), reszty[,i], xlab="ln(Czas)", main=zmienne[i],
+       ylab="Skalowane reszty Schoenfelda", pch=20, cex=0.7)
+  lines(smooth.spline(log(Time), reszty[,i] ), lwd=3 )
+}
+
+deviance=residuals(Cox3,type="deviance")
+s=Cox3$linear.predictors
+plot(s,deviance,xlab="Liniowy predyktor",ylab="Reszty odchyleń",cex=0.5, pch=20)
+
+abline(h=3,lty=3)
+dane$deviance <- deviance
+c1 <- which(dane$deviance > 3)
+```
+
+## - Usuwanie ze zbioru jednostek odstających dla modelu Cox3
+
+```{r}
+dfb=residuals(Cox3,type="dfbeta")
+n=dim(dfb)[1]
+obs.nr=c(1:n)
+par(mfrow = c(2,3))
+for (j in 1:4) {
+  plot(obs.nr,dfb[,j],xlab="Numer jednostki",ylab="Przyrost oceny parametru",
+      main=zmienne[j])
+  }
+a1 = which(abs(dfb[,1])>(0.004)) #usunac te jednostki
+a2 = which(abs(dfb[,2])>(0.06))
+a3 = which(abs(dfb[,3])>(0.001))
+a4 = which(abs(dfb[,4])>(0.004))
+
+c <- sort(unique(c(a1,a2,a3,a4,c1)))
+danec2 <- dane[-c,]
+```
+
+
+## - Identyfikacja jednostek odstających Cox4
+```{r}
+reszty <- resid(Cox4, type="scaledsch") 
+Time <- as.numeric(rownames(reszty))
+zmienne <- names(dane[,c(6,7,9)])
+
+par(mfrow = c(3,1))
+for (i in 1:3) {
+  plot(log(Time), reszty[,i], xlab="ln(Czas)", main=zmienne[i],
+       ylab="Skalowane reszty Schoenfelda", pch=20, cex=0.7)
+  lines(smooth.spline(log(Time), reszty[,i] ), lwd=3 )
+}
+deviance=residuals(Cox4,type="deviance")
+s=Cox4$linear.predictors
+plot(s,deviance,xlab="Liniowy predyktor",ylab="Reszty odchyleń",cex=0.5, pch=20)
+
+abline(h=3,lty=3)
+dane$deviance <- deviance
+c1 <- which(dane$deviance > 3)
+```
+
+## - Usuwanie ze zbioru jednostek odstających dla modelu Cox4
+Jednostki, które są odbiegające od reszty i wpływowe powinny, w miarę możliwości, zostać usunięte z badanej próby. 
+
+```{r}
+dfb=residuals(Cox4,type="dfbeta")
+n=dim(dfb)[1]
+obs.nr=c(1:n)
+par(mfrow = c(2,3))
+for (j in 1:3) {
+  plot(obs.nr,dfb[,j],xlab="Numer jednostki",ylab="Przyrost oceny parametru",
+      main=zmienne[j])
+  }
+a1 = which(abs(dfb[,1])>(0.001)) #usunac te jednostki
+a2 = which(abs(dfb[,2])>(0.006))
+a3 = which(abs(dfb[,3])>(0.0045))
+
+c <- sort(unique(c(a1,a2,a3,c1)))
+danec3 <- dane[-c,]
+```
+
+## - Oszacowanie modeli na zredukowanych zbiorach
+
+### - Model PH Cox5
+
+**Interpretacja parametrów modelu PH Cox5:**
+
+* Zmienna grade przestała być istotna (p-value > 0.05). Zrezygnowano z brania pod uwagę tego modelu.
+
+```{r}
+Cox5 <- coxph(Surv(rfstime,cens)~grade+nodes+pgr+hormon, data = danec1)
+summary(Cox5)  
+```
+
+### - Model PH Cox6
+
+**Interpretacja parametrów modelu PH Cox6:**
+
+*Hazard określany jest jako ryzyko zgonu pod warunkiem, że jednostka dożyje do danego momentu.*
+
+* Jeżeli wielkość guza wzrośnie o 1mm, hazard wzrośnie o 6,6%, cp. 
+
+* Jeżeli liczba węzłów chłonnych z przerzutami wzrośnie o 1, to hazard wrośnie o 38,3%, cp.
+
+* Jeżeli poziom receptorów progesteronowych wzrośnie o 1 (fmol/l) to hazard zmaleje o 1,47%, cp.
+
+* Pacjentki, które przechodzą terapię hormonalną mają hazard o 72,61% niższy niż pacjentki, które nie przechodzą terapii hormonalnej, cp.
+
+```{r}
+Cox6 <- coxph(Surv(rfstime,cens)~size+nodes+pgr+hormon, data = danec2)
+summary(Cox6) 
+```
+
+
+### - Model PH Cox7
+
+**Interpretacja parametrów modelu PH Cox7:**
+
+*Hazard określany jest jako ryzyko zgonu pod warunkiem, że jednostka dożyje do danego momentu.*
+
+* Jeżeli liczba węzłów chłonnych z przerzutami wzrośnie o 1, hazard wrośnie o 39,4%, cp.
+
+* Jeżeli poziom receptorów progesteronowych wzrośnie o 1 (fmol/l) to hazard zmaleje o 1,43%, cp.
+
+* Pacjentki, które przechodzą terapię hormonalną mają hazard o 57,33% niższy niż pacjentki, które nie przechodzą terapii hormonalnej, cp.
+
+```{r}
+Cox7 <- coxph(Surv(rfstime,cens)~ nodes+pgr+hormon, data = danec3)
+summary(Cox7) 
+```
+
+## - Metoda reszt martyngałowych
+Metoda reszt martyngałowych polega na wyznaczeniu reszt martyngałowych dla zmiennych objaśniających ilościowych. Rozrzut reszt martyngałowych pokazuje kształt związku łączącego zmienną objaśniającą z logarytmem hazardu. Jeżeli funkcja ta ma kształt zbliżony do liniowego to potwierdza to liniowość relacji między zmienną objaśniającą a logarytmem hazardu, w przeciwnym wypadku kształt funkcji może być wskazówką co do wyboru odpowiedniej metody transformacji zmiennej.
+
+### - Reszty martyngałowe dla zmiennych ilościowych z modelu Cox6
+
+* **size** - Potwierdzenie założenia o liniowości
+* **nodes** - Potwierdzenie założenia o liniowości
+* **pgr** - Potwierdzenie założenia o liniowości
+
+```{r}
+zmn8 <- danec2$size
+lab8 <- "size"
+reszty8 <- resid(coxph(Surv(rfstime,cens)~1,data=danec2),type="martingale")
+plot(zmn8, reszty8, xlab=lab8,ylab="Reszty martyngałowe",cex=0.6)
+lines(lowess(zmn8, reszty8,delta=1),lwd=2)
+
+zmn9 <- danec2$nodes
+lab9 <- "nodes"
+reszty9 <- resid(coxph(Surv(rfstime,cens)~1,data=danec2),type="martingale")
+plot(zmn9, reszty9, xlab=lab9,ylab="Reszty martyngałowe",cex=0.6)
+lines(lowess(zmn9, reszty9,delta=1),lwd=2)
+
+zmn10 <- danec2$pgr
+lab10 <- "pgr"
+reszty10 <- resid(coxph(Surv(rfstime,cens)~1,data=danec2),type="martingale")
+plot(zmn10, reszty10, xlab=lab10,ylab="Reszty martyngałowe",cex=0.6)
+lines(lowess(zmn10, reszty10,delta=1),lwd=2)
+```
+
+### - Reszty martyngałowe dla zmiennych ilościowych z modelu Cox7
+
+* **nodes** - Potwierdzenie założenia o liniowości
+* **pgr** - Potwierdzenie założenia o liniowości
+
+```{r}
+zmn9 <- danec3$nodes
+lab9 <- "nodes"
+reszty9 <- resid(coxph(Surv(rfstime,cens)~1,data=danec3),type="martingale")
+plot(zmn9, reszty9, xlab=lab9,ylab="Reszty martyngałowe",cex=0.6)
+lines(lowess(zmn9, reszty9,delta=1),lwd=2)
+
+zmn10 <- danec3$pgr
+lab10 <- "pgr"
+reszty10 <- resid(coxph(Surv(rfstime,cens)~1,data=danec3),type="martingale")
+plot(zmn10, reszty10, xlab=lab10,ylab="Reszty martyngałowe",cex=0.6)
+lines(lowess(zmn10, reszty10,delta=1),lwd=2)
+```
+
+
+## - Weryfikacja kryterium AIC dla wsystkich sześciu modeli
+
+W celu porównania modeli zwierajacych różne zestawy zmiennych objaśniających, wykorzystano kryterium informacyjne Akaike. Na podstawie kryterium najelpszy okazał się model Cox6 i Cox7.
+
+```{r}
+AIC_Cox1 <- AIC(Cox1)
+AIC_Cox2 <- AIC(Cox2) 
+AIC_Cox3 <- AIC(Cox3) 
+AIC_Cox4 <- AIC(Cox4) 
+AIC_Cox5 <- AIC(Cox5) 
+AIC_Cox6 <- AIC(Cox6)
+AIC_Cox7 <- AIC(Cox7)
+round(rbind(AIC_Cox1, AIC_Cox2, AIC_Cox3, AIC_Cox4, AIC_Cox5, AIC_Cox6, AIC_Cox7),2)
+```
+
+## - Miary dopasowania R2 dla wszystkich 7 modeli
+
+Miary dopasowania R2 zostały obliczone na podstawie statystyki cząstkowej ilorazu wiarygodności w modelu Coxa. Interpretację podano tylko dla modeli Cox5, Cox6 oraz Cox7. 
+* Najlepiej dopasowanym modelem, który posiada wartość dopasowania **R2 = 0,94** jest model Cox6, otrzymany po odrzuceniu zmiennych niespełniajacych założeń proporcjonalnosci oraz wyeliminowaniu jednostek odstających i wpływowych.
+
+* Drugim najlepiej dopasowanym modelem jest Cox7, otrzymany po odrzuceniu zmiennych niespełniajacych założeń proporcjonalnosci, zmiennych nie istotnych statystycznie oraz wyeliminowaniu jednostek odstających i wpływowych, gdzie miara **R2=0,86**.
+
+* Najgorzej dopasowanym modelem okazał się Cox5, gdzie miara **R2=0,56**, który zawiera wszystkie zmienne objaśniające i jedynie zosały usunięte w nim jednostki odstające i wpływowe.
+
+* Wszystkie modele przed wyeliminowaniem jednostek odstających i wpływowych (modele Cox1, Cox2, Cox3) mają bardzo małe wartości R2, nie przekraczające progu **R2=0,3**. Ich dopasownie jest bardzo słabe.
+
+```{r}
+mr1 <- coxr2(Cox1) 
+mr2 <- coxr2(Cox2) 
+mr3 <- coxr2(Cox3) 
+mr4 <- coxr2(Cox4)
+mr5 <- coxr2(Cox5) #top3
+mr6 <- coxr2(Cox6) #top1
+mr7 <- coxr2(Cox7) #top2
+round(rbind(mr1$rsq, mr2$rsq, mr3$rsq, mr4$rsq, mr5$rsq, mr6$rsq, mr7$rsq),2)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
